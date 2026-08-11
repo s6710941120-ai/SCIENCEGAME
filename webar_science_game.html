@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebAR Science Explorer - จำแนกแหล่งที่อยู่สิ่งมีชีวิต</title>
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            emerald: '#059669',
+                            teal: '#0d9488',
+                            cyan: '#0891b2',
+                            dark: '#0f172a'
+                        }
+                    },
+                    animation: {
+                        'pulse-fast': 'pulse 1s cubic-bezier(0.4, 0.0, 0.6, 1) infinite',
+                        'bounce-short': 'bounce 0.5s ease-in-out 2',
+                        'float': 'float 3s ease-in-out infinite'
+                    },
+                    keyframes: {
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0px)' },
+                            '50%': { transform: 'translateY(-8px)' }
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Google Fonts (Prompt & Inter) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700;800&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <!-- MediaPipe Hands Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        * {
+            font-family: 'Prompt', 'Inter', sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* Glassmorphism Styles */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.14);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.28);
+        }
+
+        .glass-card:hover {
+            background: rgba(255, 255, 255, 0.25);
+            border-color: rgba(255, 255, 255, 0.45);
+        }
+
+        /* Mirror Correction for Camera Feed & Overlay Canvas */
+        .mirror-view {
+            transform: scaleX(-1);
+        }
+
+        /* Custom Scrollbars */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(52, 211, 153, 0.4);
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(52, 211, 153, 0.7);
+        }
+
+        /* Drag Shake Effect */
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            20%, 60% { transform: translateX(-8px); }
+            40%, 80% { transform: translateX(8px); }
+        }
+        .animate-shake {
+            animation: shake 0.4s ease-in-out;
+        }
+    </style>
+</head>
+
+<body class="bg-slate-950 text-white overflow-hidden min-h-screen relative flex flex-col justify-between">
+
+    <!-- AR Viewport Container -->
+    <div id="app-container" class="relative w-full h-screen overflow-hidden flex flex-col justify-between items-center">
+        
+        <!-- Background Video Stream & AR Canvas Overlay -->
+        <div class="absolute inset-0 z-0 overflow-hidden flex items-center justify-center bg-slate-900">
+            <video id="webcam" class="absolute min-w-full min-h-full object-cover mirror-view opacity-80" playsinline></video>
+            <canvas id="ar-canvas" class="absolute inset-0 w-full h-full object-cover z-10 pointer-events-none"></canvas>
+        </div>
+
+        <!-- Top HUD Navigation / Dashboard -->
+        <header class="relative z-20 w-full p-3 md:p-5 flex justify-between items-center max-w-7xl mx-auto">
+            <!-- Left Info Panel: Title & FPS -->
+            <div class="glass-panel px-4 py-2 rounded-2xl flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-xl font-black shadow-lg">
+                    🌿
+                </div>
+                <div>
+                    <h1 class="text-xs md:text-sm font-bold text-emerald-300 tracking-wide">WebAR Science Game</h1>
+                    <p class="text-[10px] md:text-xs text-slate-300 flex items-center gap-2">
+                        <span>สำรวจถิ่นที่อยู่</span>
+                        <span id="fps-counter" class="bg-emerald-950/80 text-emerald-400 font-mono px-1.5 py-0.5 rounded text-[10px] border border-emerald-500/30">FPS: --</span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Middle Game Stats: Level, Score, Combo, Timer -->
+            <div class="glass-panel px-4 md:px-6 py-2 rounded-2xl flex items-center gap-4 md:gap-8">
+                <!-- Level -->
+                <div class="text-center">
+                    <p class="text-[10px] uppercase tracking-wider text-slate-400">ด่านที่</p>
+                    <p id="hud-level" class="text-sm md:text-lg font-extrabold text-amber-400">1/3</p>
+                </div>
+
+                <!-- Score -->
+                <div class="text-center border-x border-white/10 px-3 md:px-6">
+                    <p class="text-[10px] uppercase tracking-wider text-slate-400">คะแนน</p>
+                    <p id="hud-score" class="text-lg md:text-2xl font-black text-emerald-400">0</p>
+                </div>
+
+                <!-- Combo Multiplier -->
+                <div class="text-center hidden sm:block">
+                    <p class="text-[10px] uppercase tracking-wider text-slate-400">คอมโบ</p>
+                    <p id="hud-combo" class="text-sm md:text-lg font-extrabold text-cyan-300">x1</p>
+                </div>
+
+                <!-- Timer -->
+                <div class="text-center">
+                    <p class="text-[10px] uppercase tracking-wider text-slate-400">เวลา</p>
+                    <p id="hud-timer" class="text-sm md:text-lg font-mono font-bold text-slate-100">00:00</p>
+                </div>
+            </div>
+
+            <!-- Right Controls: Sound & Hand Tracking Status -->
+            <div class="glass-panel p-2 rounded-2xl flex items-center gap-2">
+                <button id="btn-toggle-sound" class="p-2.5 rounded-xl glass-card hover:bg-white/20 transition-all text-sm" title="เปิด/ปิด เสียง">
+                    🔊
+                </button>
+                <div id="hand-status-badge" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                    <span id="hand-status-text">กำลังโหลดกล้อง...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Center Game Zone Overlay -->
+        <main class="relative z-20 w-full flex-1 max-w-6xl mx-auto px-4 flex flex-col justify-between py-2 md:py-4 pointer-events-none">
+            
+            <!-- Hint & Feedback Popup Notification -->
+            <div class="w-full flex justify-center pointer-events-none min-h-[44px]">
+                <div id="toast-banner" class="glass-panel px-6 py-2.5 rounded-full text-xs md:text-sm font-medium text-emerald-300 flex items-center gap-2 border border-emerald-400/30 shadow-lg transform translate-y-[-20px] opacity-0 transition-all duration-300">
+                    <span id="toast-icon">💡</span>
+                    <span id="toast-message">ลากการ์ดสิ่งมีชีวิตไปวางในถิ่นที่อยู่ที่ถูกต้อง!</span>
+                </div>
+            </div>
+
+            <!-- Habitat Target Drop Zones (Left & Right with ENLARGED Images) -->
+            <div class="grid grid-cols-2 gap-4 md:gap-8 my-auto w-full">
+                <!-- Drop Zone 1 (Left) -->
+                <div id="zone-left" data-habitat="" class="habitat-zone pointer-events-auto glass-panel p-4 md:p-6 rounded-3xl border-2 border-dashed border-emerald-400/40 hover:border-emerald-400 transition-all flex flex-col items-center justify-between min-h-[260px] md:min-h-[340px] relative overflow-hidden group">
+                    <div class="absolute inset-0 bg-gradient-to-b from-emerald-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <!-- Enlarged Habitat Image -->
+                    <img id="zone-left-icon" src="" alt="Habitat Left" referrerpolicy="no-referrer" class="w-28 h-28 md:w-36 md:h-36 object-cover my-2 transform group-hover:scale-110 transition-transform drop-shadow-2xl rounded-2xl bg-slate-900/60 p-2 border border-white/20">
+                    <h2 id="zone-left-title" class="text-lg md:text-2xl font-black text-emerald-300 text-center drop-shadow">ป่าไม้ (Forest)</h2>
+                    <p id="zone-left-desc" class="text-xs md:text-sm text-slate-200 text-center mt-1">แหล่งรวมพืชและสัตว์ป่า</p>
+                    
+                    <div class="mt-3 w-full bg-white/5 rounded-2xl p-2 min-h-[60px] flex flex-wrap gap-2 justify-center items-center border border-white/10" id="zone-left-collected">
+                        <!-- Collected badges rendered here -->
+                    </div>
+                </div>
+
+                <!-- Drop Zone 2 (Right) -->
+                <div id="zone-right" data-habitat="" class="habitat-zone pointer-events-auto glass-panel p-4 md:p-6 rounded-3xl border-2 border-dashed border-cyan-400/40 hover:border-cyan-400 transition-all flex flex-col items-center justify-between min-h-[260px] md:min-h-[340px] relative overflow-hidden group">
+                    <div class="absolute inset-0 bg-gradient-to-b from-cyan-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <!-- Enlarged Habitat Image -->
+                    <img id="zone-right-icon" src="" alt="Habitat Right" referrerpolicy="no-referrer" class="w-28 h-28 md:w-36 md:h-36 object-cover my-2 transform group-hover:scale-110 transition-transform drop-shadow-2xl rounded-2xl bg-slate-900/60 p-2 border border-white/20">
+                    <h2 id="zone-right-title" class="text-lg md:text-2xl font-black text-cyan-300 text-center drop-shadow">สระน้ำ (Pond)</h2>
+                    <p id="zone-right-desc" class="text-xs md:text-sm text-slate-200 text-center mt-1">ถิ่นที่อยู่อาศัยในน้ำ</p>
+
+                    <div class="mt-3 w-full bg-white/5 rounded-2xl p-2 min-h-[60px] flex flex-wrap gap-2 justify-center items-center border border-white/10" id="zone-right-collected">
+                        <!-- Collected badges rendered here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Active Card Deck Dock (Bottom Center) -->
+            <div class="w-full flex flex-col items-center justify-center pb-2 pointer-events-auto">
+                <p class="text-xs text-amber-300 mb-2 flex items-center gap-1.5 font-semibold bg-slate-900/80 px-4 py-1 rounded-full border border-amber-400/30 shadow">
+                    <span>🤏 หนีบนิ้วชี้+โป้ง (Pinch) หรือใช้ Mouse/Touch ลากการ์ดขนาดใหญ่</span>
+                </p>
+
+                <!-- Current Active Target Item Card -->
+                <div id="active-card-container" class="relative min-h-[140px] w-full flex justify-center items-center">
+                    <!-- Dynamic Active Draggable Card with enlarged image inserted via JS -->
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer / Instructions Bar -->
+        <footer class="relative z-20 w-full py-2 bg-slate-950/80 backdrop-blur-md border-t border-white/10 text-center text-[11px] text-slate-300">
+            <span>💡 คำแนะนำ: นำนิ้วชี้และนิ้วโป้งแตะเข้าหากัน (Pinch) เพื่อหนีบการ์ด แล้วลากไปวางในฝั่งที่ถูกต้อง</span>
+        </footer>
+    </div>
+
+    <!-- Start Game & Educational Knowledge Modal Overlay -->
+    <div id="modal-start" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md overflow-y-auto">
+        <div class="glass-panel p-6 md:p-8 rounded-3xl max-w-2xl w-full text-center border border-emerald-500/30 shadow-2xl relative my-auto max-h-[90vh] flex flex-col justify-between overflow-y-auto">
+            <div>
+                <div class="w-20 h-20 bg-gradient-to-tr from-emerald-500 to-cyan-500 rounded-3xl mx-auto flex items-center justify-center text-4xl shadow-xl mb-3 animate-bounce-short">
+                    🌿
+                </div>
+                
+                <h2 class="text-2xl md:text-3xl font-extrabold text-white mb-1">WebAR Science Explorer</h2>
+                <p class="text-sm text-emerald-300 font-semibold mb-4">เรียนรู้การจำแนกพืชและสัตว์ตามแหล่งที่อยู่อาศัย</p>
+
+                <!-- Educational Knowledge Section on Start Screen -->
+                <div class="text-left bg-slate-900/80 p-4 md:p-5 rounded-2xl mb-5 border border-emerald-500/30 space-y-3">
+                    <h3 class="text-base font-bold text-emerald-300 flex items-center gap-2 border-b border-emerald-500/30 pb-2">
+                        📖 เกร็ดความรู้วิทยาศาสตร์: แหล่งที่อยู่อาศัย (Habitat)
+                    </h3>
+                    <p class="text-xs md:text-sm text-slate-200 leading-relaxed">
+                        <strong class="text-emerald-400">แหล่งที่อยู่อาศัย</strong> คือ สภาพแวดล้อมที่พืชและสัตว์ใช้เป็นที่อยู่อาศัย หาอาหาร หลบภัย และสืบพันธุ์ โดยสิ่งมีชีวิตแต่ละชนิดจะมีโครงสร้างและการปรับตัวให้เหมาะสมกับถิ่นที่อยู่นั้นๆ เช่น:
+                    </p>
+                    <ul class="text-xs md:text-sm text-slate-300 space-y-1.5 list-disc list-inside bg-white/5 p-3 rounded-xl border border-white/10">
+                        <li><strong class="text-amber-300">ป่าไม้ & ป่าดิบชื้น:</strong> อุดมด้วยต้นไม้ สัตว์มีทักษะการปีนป่าย ซ่อนตัว หรือหากินบนบก</li>
+                        <li><strong class="text-cyan-300">สระน้ำ & มหาสมุทร:</strong> พืชน้ำมีลำต้นโปร่งลอยน้ำได้ สัตว์น้ำมีครีบและเหงือกช่วยหายใจ</li>
+                        <li><strong class="text-yellow-300">ทะเลทราย:</strong> อากาศร้อนแห้งแล้ง พืชเปลี่ยนใบเป็นหนามเพื่อลดการคายน้ำ</li>
+                        <li><strong class="text-blue-300">ขั้วโลก:</strong> หนาวเย็นจัด สัตว์จะมีขนแน่นและชั้นไขมันหนาเพื่อรักษาความอบอุ่น</li>
+                    </ul>
+                </div>
+
+                <!-- Gameplay Instructions -->
+                <div class="text-left bg-white/5 p-4 rounded-2xl mb-6 border border-white/10 space-y-2 text-xs md:text-sm text-slate-300">
+                    <p class="font-bold text-amber-300 mb-1">🎮 วิธีการเล่น:</p>
+                    <div class="flex items-start gap-2">
+                        <span class="text-emerald-400 font-bold">1.</span>
+                        <p>อนุญาตการใช้กล้องเพื่อให้ระบบ **Hand Tracking** ตรวจจับมือของคุณ</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="text-emerald-400 font-bold">2.</span>
+                        <p>ใช้นิ้วชี้และนิ้วโป้งแตะเข้าหากัน **(Pinch หนีบนิ้ว)** เพื่อจับการ์ดสิ่งมีชีวิต</p>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="text-emerald-400 font-bold">3.</span>
+                        <p>ลากไปปล่อยในโซนถิ่นที่อยู่ที่ถูกต้อง เพื่อสะสมคะแนน และสร้าง Combo!</p>
+                    </div>
+                </div>
+            </div>
+
+            <button id="btn-start-game" class="w-full py-4 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-bold text-base md:text-lg shadow-lg shadow-emerald-500/30 transform active:scale-95 transition-all">
+                🚀 เริ่มต้นการสำรวจ WebAR
+            </button>
+        </div>
+    </div>
+
+    <!-- Level Complete Knowledge Summary Modal -->
+    <div id="modal-level-knowledge" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md hidden overflow-y-auto">
+        <div class="glass-panel p-6 md:p-8 rounded-3xl max-w-2xl w-full text-center border border-amber-400/40 shadow-2xl relative my-auto max-h-[90vh] flex flex-col justify-between overflow-y-auto">
+            <div>
+                <div class="w-16 h-16 bg-gradient-to-tr from-amber-400 to-emerald-400 rounded-2xl mx-auto flex items-center justify-center text-3xl shadow-xl mb-3 animate-bounce">
+                    📚
+                </div>
+
+                <h2 id="knowledge-level-title" class="text-2xl md:text-3xl font-black text-amber-300 mb-1">ผ่านด่านสำเร็จ!</h2>
+                <p class="text-xs md:text-sm text-emerald-300 font-semibold mb-4">สรุปความรู้ทางวิทยาศาสตร์ประจำด่าน</p>
+
+                <!-- Dynamic Level Science Knowledge Content Container -->
+                <div id="knowledge-content-body" class="text-left space-y-4 mb-6">
+                    <!-- Populated dynamically via JS -->
+                </div>
+            </div>
+
+            <button id="btn-next-level" class="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white font-bold text-base shadow-lg shadow-emerald-500/30 transform active:scale-95 transition-all">
+                ➡️ เข้าสู่ด่านต่อไป
+            </button>
+        </div>
+    </div>
+
+    <!-- Final Victory / All Clear Modal Overlay -->
+    <div id="modal-victory" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-lg hidden overflow-y-auto">
+        <div class="glass-panel p-6 md:p-8 rounded-3xl max-w-xl w-full text-center border border-amber-500/40 shadow-2xl relative my-auto max-h-[90vh] overflow-y-auto">
+            <div class="w-20 h-20 bg-gradient-to-tr from-amber-400 to-yellow-500 rounded-3xl mx-auto flex items-center justify-center text-5xl shadow-2xl mb-3 animate-bounce">
+                🏆
+            </div>
+
+            <h2 class="text-2xl md:text-3xl font-black text-amber-300 mb-1">🎉 CONGRATULATIONS!</h2>
+            <p class="text-xs md:text-sm text-slate-200 mb-4">คุณผ่านการจำแนกถิ่นที่อยู่สิ่งมีชีวิตครบทุกด่านแล้ว!</p>
+
+            <!-- Star Rating Display -->
+            <div id="victory-stars" class="flex justify-center gap-2 text-4xl mb-4">
+                <span class="text-amber-400 drop-shadow-md">★</span>
+                <span class="text-amber-400 drop-shadow-md">★</span>
+                <span class="text-amber-400 drop-shadow-md">★</span>
+            </div>
+
+            <!-- Stats Summary Board -->
+            <div class="bg-white/5 rounded-2xl p-4 mb-5 border border-white/10 space-y-2.5 text-xs md:text-sm">
+                <div class="flex justify-between items-center text-slate-200">
+                    <span>คะแนนรวมทั้งหมด:</span>
+                    <span id="summary-score" class="text-lg font-bold text-emerald-400">0</span>
+                </div>
+                <div class="flex justify-between items-center text-slate-200">
+                    <span>เวลาที่ใช้ทั้งหมด:</span>
+                    <span id="summary-time" class="text-lg font-mono font-bold text-cyan-300">00:00</span>
+                </div>
+                <div class="flex justify-between items-center text-slate-200">
+                    <span>แมกซ์คอมโบ (Max Combo):</span>
+                    <span id="summary-combo" class="text-lg font-bold text-amber-400">x1</span>
+                </div>
+                <div class="flex justify-between items-center text-slate-200">
+                    <span>ฉายาความสำเร็จ:</span>
+                    <span id="summary-badge" class="text-xs font-bold text-amber-300 bg-amber-500/20 px-2.5 py-1 rounded-lg border border-amber-500/30">นักชีววิทยาตัวน้อย 🌿</span>
+                </div>
+            </div>
+
+            <!-- Knowledge Master Recap -->
+            <div class="bg-slate-900/80 p-4 rounded-2xl text-left border border-emerald-500/30 mb-6 text-xs text-slate-300 space-y-2">
+                <p class="font-bold text-emerald-300 flex items-center gap-1.5 text-sm">
+                    💡 สรุปหัวใจสำคัญ:
+                </p>
+                <p>สิ่งมีชีวิตทุกชนิดมีความสัมพันธ์กับแหล่งที่อยู่อาศัย พืชและสัตว์จะมีลักษณะโครงสร้างและพฤติกรรมที่ปรับตัวให้เข้ากับสภาพแวดล้อมเพื่อการอยู่รอด!</p>
+            </div>
+
+            <button id="btn-restart-game" class="w-full py-3.5 px-6 rounded-2xl bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white font-bold text-base shadow-lg shadow-emerald-500/30 transform active:scale-95 transition-all">
+                🔄 เล่นใหม่อีกครั้ง
+            </button>
+        </div>
+    </div>
+
+
+    <script>
+        // Web Audio API Synthesizer (No external sound assets required)
+        class SoundSynth {
+            constructor() {
+                this.ctx = null;
+                this.enabled = true;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    this.ctx = new AudioContext();
+                }
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            playGrab() {
+                if (!this.enabled || !this.ctx) return;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(300, this.ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(600, this.ctx.currentTime + 0.08);
+                gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.08);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start();
+                osc.stop(this.ctx.currentTime + 0.08);
+            }
+
+            playCorrect() {
+                if (!this.enabled || !this.ctx) return;
+                const now = this.ctx.currentTime;
+                [523.25, 659.25, 783.99, 1046.50].forEach((freq, idx) => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(freq, now + idx * 0.06);
+                    gain.gain.setValueAtTime(0.2, now + idx * 0.06);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.06 + 0.25);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(now + idx * 0.06);
+                    osc.stop(now + idx * 0.06 + 0.25);
+                });
+            }
+
+            playWrong() {
+                if (!this.enabled || !this.ctx) return;
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(180, now);
+                osc.frequency.linearRampToValueAtTime(110, now + 0.25);
+                gain.gain.setValueAtTime(0.25, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.25);
+            }
+
+            playVictory() {
+                if (!this.enabled || !this.ctx) return;
+                const now = this.ctx.currentTime;
+                const notes = [440, 554.37, 659.25, 880, 659.25, 880];
+                notes.forEach((freq, i) => {
+                    const osc = this.ctx.createOscillator();
+                    const gain = this.ctx.createGain();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(freq, now + i * 0.12);
+                    gain.gain.setValueAtTime(0.2, now + i * 0.12);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.35);
+                    osc.connect(gain);
+                    gain.connect(this.ctx.destination);
+                    osc.start(now + i * 0.12);
+                    osc.stop(now + i * 0.12 + 0.35);
+                });
+            }
+        }
+
+        const soundSynth = new SoundSynth();
+
+        // Curriculum Content Data Structure with Custom Image Links & End-Level Knowledge Summaries
+        const GAME_LEVELS = [
+            {
+                id: 1,
+                name: "ด่านที่ 1: ป่าไม้ vs สระน้ำ",
+                zones: {
+                    left: { id: "forest", name: "ป่าไม้ (Forest)", image: "https://lh3.googleusercontent.com/d/1BKweyCvGWeN8m1tWxNYi-SpfxS4rn2w6", desc: "ถิ่นที่อยู่บนบกที่อุดมสมบูรณ์" },
+                    right: { id: "pond", name: "สระน้ำ (Pond)", image: "https://lh3.googleusercontent.com/d/1BFTFuPWmZ9HvQuuKmgDxRPF-rj07HpzI", desc: "ถิ่นที่อยู่อาศัยในน้ำจืด" }
+                },
+                items: [
+                    { id: "tiger", name: "เสือโคร่ง", type: "animal", image: "https://lh3.googleusercontent.com/d/1JvcxcmOm9Q6fg0L4GTHcLC4UdK7-wLEi", habitat: "forest", hint: "สัตว์กินเนื้อ มีลายพรางตัวรอกระโจนในป่าไม้" },
+                    { id: "deer", name: "กวางป่า", type: "animal", image: "https://lh3.googleusercontent.com/d/1cmIxHvcio37N-rcU0SX1E5zwO5kSeQ4i", habitat: "forest", hint: "สัตว์กินพืช วิ่งเร็ว อาศัยตามป่าทึบ" },
+                    { id: "frog", name: "กบ", type: "animal", image: "https://lh3.googleusercontent.com/d/14ks8Ei0Tr_IJgvPt6-vaunjEjW7Srr5J", habitat: "pond", hint: "สัตว์สะเทินน้ำสะเทินบก วางไข่ในน้ำ" },
+                    { id: "lotus", name: "ดอกบัว", type: "plant", image: "https://lh3.googleusercontent.com/d/1B9e4TAP2dJHFvuQ3Yt6z33v4YnVszRx7", habitat: "pond", hint: "พืชน้ำ มีก้านยาวชูดอกขึ้นพ้นผิวน้ำ" },
+                    { id: "fern", name: "เฟิร์น", type: "plant", image: "https://lh3.googleusercontent.com/d/1Gpzjwuw3myKqyRV-WXM-Q2ft-JwjHdWS", habitat: "forest", hint: "พืชชอบความชุ่มชื้นใต้ร่มเงาไม้ใหญ่" },
+                    { id: "duckweed", name: "จอกแหน", type: "plant", image: "https://lh3.googleusercontent.com/d/1KLFKWm3lEHGmFU1sEBGsgv_MF0jmITp0", habitat: "pond", hint: "พืชน้ำขนาดเล็ก ลอยอยู่บนผิวน้ำจืด" }
+                ],
+                summaryKnowledge: [
+                    { title: "🌲 ถิ่นที่อยู่: ป่าไม้ (Forest)", text: "เป็นแหล่งที่อยู่บนบก มีต้นไม้หนาแน่น เป็นที่ซ่อนตัวและหาอาหารของเสือโคร่ง กวางป่า และพืชชอบร่มเงาอย่างเฟิร์น" },
+                    { title: "🌊 ถิ่นที่อยู่: สระน้ำ (Pond)", text: "เป็นแหล่งน้ำจืดตื้นๆ มีพืชน้ำอย่างดอกบัวและจอกแหนที่ลอยน้ำได้ดี รวมถึงกบที่เป็นสัตว์สะเทินน้ำสะเทินบก" }
+                ]
+            },
+            {
+                id: 2,
+                name: "ด่านที่ 2: ทะเลทราย vs ขั้วโลก",
+                zones: {
+                    left: { id: "desert", name: "ทะเลทราย (Desert)", image: "https://lh3.googleusercontent.com/d/1UwsIrhhzu0-FGoKFElcSjYwrnLFblX7H", desc: "แห้งแล้งและร้อนจัด" },
+                    right: { id: "polar", name: "ขั้วโลก (Polar)", image: "https://lh3.googleusercontent.com/d/1IO8ZfIl9Ki3Fk9N6SxpplVEnpD1rdE10", desc: "หนาวเย็นและมีน้ำแข็ง" }
+                },
+                items: [
+                    { id: "camel", name: "อูฐ", type: "animal", image: "https://lh3.googleusercontent.com/d/1ophW9DbYA3elrW3Dkd7U33Ji1Utdhsk9", habitat: "desert", hint: "มีโหนกเก็บไขมัน ทนความแห้งแล้งได้ดี" },
+                    { id: "cactus", name: "กระบองเพชร", type: "plant", image: "https://lh3.googleusercontent.com/d/1tDLDauf8zqe1gQnRxnOyFm9zzN91swAm", habitat: "desert", hint: "เปลี่ยนใบเป็นหนามเพื่อลดการคายน้ำ" },
+                    { id: "polarbear", name: "หมีขั้วโลก", type: "animal", image: "https://lh3.googleusercontent.com/d/1wIwi2zStpAHJ8x0QpfOXCc0cBJYwFqzA", habitat: "polar", hint: "มีขนหนาและชั้นไขมันทนความหนาวเย็น" },
+                    { id: "penguin", name: "เพนกวิน", type: "animal", image: "https://lh3.googleusercontent.com/d/1hfiprU-gO-fe1j7ee4hoc6fW98QccEK6", habitat: "polar", hint: "นกที่ว่ายน้ำเก่ง อาศัยแถบธารน้ำแข็ง" },
+                    { id: "fennecfox", name: "หมาจิ้งจอกหูยาว", type: "animal", image: "https://lh3.googleusercontent.com/d/1ZpLZy0Z9g4tII9P1HOSYz2oVzA-j_yf9", habitat: "desert", hint: "หูกว้างช่วยระบายความร้อนในทะเลทราย" },
+                    { id: "moss", name: "มอสส์ขั้วโลก", type: "plant", image: "https://lh3.googleusercontent.com/d/1zn0Kv1fuYHuiIzliu-5wOusWiaT5B6zV", habitat: "polar", hint: "เติบโตราบไปกับพื้นในฤดูร้อนแถบขั้วโลก" }
+                ],
+                summaryKnowledge: [
+                    { title: "🏜️ ถิ่นที่อยู่: ทะเลทราย (Desert)", text: "สภาพแวดล้อมร้อนจัดและแห้งแล้ง พืชอย่างกระบองเพชรปรับตัวเปลี่ยนใบเป็นหนาม ส่วนอูฐและหมาจิ้งจอกหูยาวระบายความร้อนได้ดี" },
+                    { title: "❄️ ถิ่นที่อยู่: ขั้วโลก (Polar)", text: "หนาวเย็นจัดตลอดปี ปกคลุมด้วยน้ำแข็ง หมีขั้วโลกและเพนกวินมีชั้นไขมันหนาช่วยรักษาความอบอุ่นของร่างกาย" }
+                ]
+            },
+            {
+                id: 3,
+                name: "ด่านที่ 3: มหาสมุทร vs ป่าดิบชื้น",
+                zones: {
+                    left: { id: "ocean", name: "มหาสมุทร (Ocean)", image: "https://lh3.googleusercontent.com/d/1RkoifhgYdaWfEl0_ExVRCK8HS5o54bfd", desc: "น้ำเค็มกว้างใหญ่" },
+                    right: { id: "rainforest", name: "ป่าดิบชื้น (Rainforest)", image: "https://lh3.googleusercontent.com/d/1SqSazbgYtUI7vhM66F9kkR_xEqAzgfhR", desc: "ชุ่มชื้น ฝนตกชื้นตลอดปี" }
+                },
+                items: [
+                    { id: "whale", name: "วาฬสีน้ำเงิน", type: "animal", image: "https://lh3.googleusercontent.com/d/1dilH_QXqJu3J0XNS9Nl2GQ2xI4ORDTgz", habitat: "ocean", hint: "สัตว์เลี้ยงลูกด้วยนมขนาดใหญ่ที่อยู่ในทะเล" },
+                    { id: "coral", name: "ปะการัง", type: "plant", image: "https://lh3.googleusercontent.com/d/1-90sLD8Kx0PE-8TZsTu9Eb0jzVu02VH3", habitat: "ocean", hint: "แหล่งที่อยู่อาศัยและที่หลบภัยใต้ทะเล" },
+                    { id: "toucan", name: "นกทูแคน", type: "animal", image: "https://lh3.googleusercontent.com/d/1fJi7KMQJEAAKSuDnifvc_wM3Czqc2Vw5", habitat: "rainforest", hint: "นกปากใหญ่สีสดใส เกาะบนต้นไม้สูงในป่า" },
+                    { id: "jaguar", name: "เสือดาว/เสือโคร่งป่า", type: "animal", image: "https://lh3.googleusercontent.com/d/1x2LmTmGnFWwNsfBx10MtnWMy-vcqpyW7", habitat: "rainforest", hint: "นักล่าที่เชี่ยวชาญการปีนป่ายในป่าดิบชื้น" },
+                    { id: "orchid", name: "กล้วยไม้ป่า", type: "plant", image: "https://lh3.googleusercontent.com/d/1ZQONkrggscUbpAyX5SMqvZqs0733T58O", habitat: "rainforest", hint: "พืชอิงอาศัยเกาะตามคอกไม้ใหญ่ในป่าดงดิบ" },
+                    { id: "clownfish", name: "ปลาการ์ตูน", type: "animal", image: "https://lh3.googleusercontent.com/d/1RJinvRL0Web0YKBj4H8HPBylpooqEX63", habitat: "ocean", hint: "ว่ายน้ำซ่อนตัวอยู่ในดอกไม้ทะเล" }
+                ],
+                summaryKnowledge: [
+                    { title: "🌊 ถิ่นที่อยู่: มหาสมุทร (Ocean)", text: "แหล่งน้ำเค็มกว้างใหญ่ เป็นบ้านของวาฬสีน้ำเงิน ปลาการ์ตูน และปะการังที่เป็นแหล่งอนุบาลสัตว์น้ำ" },
+                    { title: "🌴 ถิ่นที่อยู่: ป่าดิบชื้น (Rainforest)", text: "มีความชื้นสูงและฝนตกชุ่มชื้น พืชอย่างกล้วยไม้จะอิงอาศัยบนต้นไม้ใหญ่ สัตว์มีนกทูแคนและเสือดาวที่ปีนป่ายได้ดี" }
+                ]
+            }
+        ];
+
+        // Game State Variables
+        let currentLevelIdx = 0;
+        let currentItemIdx = 0;
+        let score = 0;
+        let combo = 0;
+        let maxCombo = 0;
+        let totalTimeSeconds = 0;
+        let gameTimerInterval = null;
+        let activeCardItem = null;
+        let levelItemsQueue = [];
+
+        // Hand & Tracking States
+        let cursorX = window.innerWidth / 2;
+        let cursorY = window.innerHeight / 2;
+        let targetCursorX = cursorX;
+        let targetCursorY = cursorY;
+        let isPinched = false;
+        let wasPinched = false;
+        let draggedElement = null;
+        let handDetected = false;
+
+        // Particle Visual Effects System
+        class ParticleSystem {
+            constructor() {
+                this.particles = [];
+            }
+
+            spawn(x, y, color = '#10b981', count = 30) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = Math.random() * 8 + 2;
+                    this.particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed,
+                        radius: Math.random() * 6 + 3,
+                        color: color,
+                        alpha: 1,
+                        decay: Math.random() * 0.03 + 0.015
+                    });
+                }
+            }
+
+            updateAndDraw(ctx) {
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    const p = this.particles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.2; // Gravity
+                    p.alpha -= p.decay;
+
+                    if (p.alpha <= 0) {
+                        this.particles.splice(i, 1);
+                        continue;
+                    }
+
+                    ctx.save();
+                    ctx.globalAlpha = p.alpha;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+        }
+
+        const particles = new ParticleSystem();
+
+        // DOM Elements
+        const webcamElement = document.getElementById('webcam');
+        const arCanvas = document.getElementById('ar-canvas');
+        const arCtx = arCanvas.getContext('2d');
+
+        const hudLevel = document.getElementById('hud-level');
+        const hudScore = document.getElementById('hud-score');
+        const hudCombo = document.getElementById('hud-combo');
+        const hudTimer = document.getElementById('hud-timer');
+        const fpsCounter = document.getElementById('fps-counter');
+        const handStatusText = document.getElementById('hand-status-text');
+        const handStatusBadge = document.getElementById('hand-status-badge');
+
+        const toastBanner = document.getElementById('toast-banner');
+        const toastMessage = document.getElementById('toast-message');
+        const toastIcon = document.getElementById('toast-icon');
+
+        const activeCardContainer = document.getElementById('active-card-container');
+        const zoneLeft = document.getElementById('zone-left');
+        const zoneRight = document.getElementById('zone-right');
+
+        const modalStart = document.getElementById('modal-start');
+        const modalVictory = document.getElementById('modal-victory');
+        const modalLevelKnowledge = document.getElementById('modal-level-knowledge');
+        const knowledgeLevelTitle = document.getElementById('knowledge-level-title');
+        const knowledgeContentBody = document.getElementById('knowledge-content-body');
+
+        const btnStartGame = document.getElementById('btn-start-game');
+        const btnNextLevel = document.getElementById('btn-next-level');
+        const btnRestartGame = document.getElementById('btn-restart-game');
+        const btnToggleSound = document.getElementById('btn-toggle-sound');
+
+        // Resize Canvas Window Responsively
+        function resizeCanvas() {
+            arCanvas.width = window.innerWidth;
+            arCanvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // FPS Counter Tracker
+        let frameCount = 0;
+        let lastFpsCheck = performance.now();
+        let currentFps = 0;
+
+        function updateFps() {
+            frameCount++;
+            const now = performance.now();
+            if (now - lastFpsCheck >= 1000) {
+                currentFps = Math.round((frameCount * 1000) / (now - lastFpsCheck));
+                fpsCounter.textContent = `FPS: ${currentFps}`;
+                frameCount = 0;
+                lastFpsCheck = now;
+            }
+        }
+
+        // MediaPipe Hands Listener
+        function onResults(results) {
+            updateFps();
+
+            // Clear Canvas
+            arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height);
+
+            // Draw Particle Effects
+            particles.updateAndDraw(arCtx);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                handDetected = true;
+
+                handStatusBadge.className = "px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5";
+                handStatusText.textContent = "ตรวจพบมือ (Ready)";
+
+                // Landmarks: Index Tip (8), Thumb Tip (4)
+                const indexTip = landmarks[8];
+                const thumbTip = landmarks[4];
+
+                // Scale to mirror screen coordinates
+                const screenX = (1 - indexTip.x) * arCanvas.width;
+                const screenY = indexTip.y * arCanvas.height;
+
+                targetCursorX = screenX;
+                targetCursorY = screenY;
+
+                // Smooth Cursor movement
+                cursorX += (targetCursorX - cursorX) * 0.45;
+                cursorY += (targetCursorY - cursorY) * 0.45;
+
+                // Calculate Pinch Distance using Euclidean Distance formula
+                const dx = (indexTip.x - thumbTip.x) * arCanvas.width;
+                const dy = (indexTip.y - thumbTip.y) * arCanvas.height;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+
+                // Pinch threshold (approx. 50px)
+                isPinched = distance < 50;
+
+                // Draw Hand Skeletons & Pinch Visualizer
+                drawHandSkeleton(landmarks);
+                drawCursor(cursorX, cursorY, isPinched);
+
+                // Handle Hand Pinch Grab & Drop logic
+                handleHandInteraction(cursorX, cursorY, isPinched);
+
+            } else {
+                handDetected = false;
+                handStatusBadge.className = "px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 flex items-center gap-1.5";
+                handStatusText.textContent = "ไม่พบมือ (ใช้ Mouse/Touch ได้)";
+                
+                // Draw cursor if touch/mouse active
+                drawCursor(cursorX, cursorY, isPinched);
+            }
+
+            wasPinched = isPinched;
+        }
+
+        // Draw Hand Connections
+        function drawHandSkeleton(landmarks) {
+            const connections = HAND_CONNECTIONS;
+            arCtx.strokeStyle = 'rgba(52, 211, 153, 0.45)';
+            arCtx.lineWidth = 3;
+
+            for (const conn of connections) {
+                const p1 = landmarks[conn[0]];
+                const p2 = landmarks[conn[1]];
+
+                const x1 = (1 - p1.x) * arCanvas.width;
+                const y1 = p1.y * arCanvas.height;
+                const x2 = (1 - p2.x) * arCanvas.width;
+                const y2 = p2.y * arCanvas.height;
+
+                arCtx.beginPath();
+                arCtx.moveTo(x1, y1);
+                arCtx.lineTo(x2, y2);
+                arCtx.stroke();
+            }
+
+            // Draw Joint Nodes
+            for (const lm of landmarks) {
+                const x = (1 - lm.x) * arCanvas.width;
+                const y = lm.y * arCanvas.height;
+                arCtx.fillStyle = '#10b981';
+                arCtx.beginPath();
+                arCtx.arc(x, y, 4, 0, Math.PI * 2);
+                arCtx.fill();
+            }
+        }
+
+        // Draw Interactive Target Cursor
+        function drawCursor(x, y, pinched) {
+            arCtx.save();
+            
+            // Pulse Ring
+            arCtx.strokeStyle = pinched ? '#f59e0b' : '#38bdf8';
+            arCtx.lineWidth = pinched ? 4 : 2;
+            arCtx.beginPath();
+            arCtx.arc(x, y, pinched ? 24 : 18, 0, Math.PI * 2);
+            arCtx.stroke();
+
+            // Inner Orb
+            arCtx.fillStyle = pinched ? '#fbbf24' : '#06b6d4';
+            arCtx.beginPath();
+            arCtx.arc(x, y, pinched ? 12 : 7, 0, Math.PI * 2);
+            arCtx.fill();
+
+            // Text Label
+            arCtx.fillStyle = '#ffffff';
+            arCtx.font = '11px Prompt, sans-serif';
+            arCtx.textAlign = 'center';
+            arCtx.fillText(pinched ? 'GRABBED' : 'POINTER', x, y + 36);
+
+            arCtx.restore();
+        }
+
+        // Hand Grab and Drop State Machine
+        function handleHandInteraction(cx, cy, pinched) {
+            const activeCard = document.querySelector('.draggable-card');
+            if (!activeCard) return;
+
+            // Pinch JUST Started (Just Pressed)
+            if (pinched && !wasPinched) {
+                const rect = activeCard.getBoundingClientRect();
+                // Check if cursor is over active card
+                if (cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom) {
+                    draggedElement = activeCard;
+                    soundSynth.playGrab();
+                    draggedElement.classList.add('scale-105', 'shadow-2xl', 'ring-4', 'ring-amber-400');
+                    showToast('💡 หนีบการ์ดอยู่! ลากไปวางในฝั่งที่ถูกต้อง', '🤏');
+                }
+            }
+
+            // Currently Dragging
+            if (pinched && draggedElement) {
+                draggedElement.style.position = 'fixed';
+                draggedElement.style.left = `${cx - 90}px`;
+                draggedElement.style.top = `${cy - 70}px`;
+                draggedElement.style.zIndex = '1000';
+            }
+
+            // Pinch Release (Dropped)
+            if (!pinched && wasPinched && draggedElement) {
+                checkCardDrop(cx, cy, draggedElement);
+                draggedElement.classList.remove('scale-105', 'shadow-2xl', 'ring-4', 'ring-amber-400');
+                draggedElement = null;
+            }
+        }
+
+        // Check if card was dropped in correct habitat zone
+        function checkCardDrop(cx, cy, cardElem) {
+            const habitatTarget = cardElem.dataset.habitat;
+            const leftRect = zoneLeft.getBoundingClientRect();
+            const rightRect = zoneRight.getBoundingClientRect();
+
+            let droppedZone = null;
+
+            if (cx >= leftRect.left && cx <= leftRect.right && cy >= leftRect.top && cy <= leftRect.bottom) {
+                droppedZone = zoneLeft;
+            } else if (cx >= rightRect.left && cx <= rightRect.right && cy >= rightRect.top && cy <= rightRect.bottom) {
+                droppedZone = zoneRight;
+            }
+
+            if (droppedZone) {
+                const zoneHabitat = droppedZone.dataset.habitat;
+
+                if (zoneHabitat === habitatTarget) {
+                    // CORRECT MATCH!
+                    soundSynth.playCorrect();
+                    particles.spawn(cx, cy, '#10b981', 35);
+                    
+                    combo++;
+                    if (combo > maxCombo) maxCombo = combo;
+                    const pointsGained = 100 * combo;
+                    score += pointsGained;
+
+                    showToast(`ถูกต้อง! +${pointsGained} คะแนน (คอมโบ x${combo})`, '🎉');
+                    
+                    // Add enlarged badge to zone
+                    const badge = document.createElement('span');
+                    badge.className = 'px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-300 text-xs md:text-sm font-semibold border border-emerald-400/30 animate-bounce-short flex items-center gap-2 shadow-md';
+                    badge.innerHTML = `<img src="${activeCardItem.image}" alt="${activeCardItem.name}" referrerpolicy="no-referrer" class="w-8 h-8 object-cover rounded-lg border border-white/20"> ${activeCardItem.name}`;
+                    
+                    if (droppedZone === zoneLeft) {
+                        document.getElementById('zone-left-collected').appendChild(badge);
+                    } else {
+                        document.getElementById('zone-right-collected').appendChild(badge);
+                    }
+
+                    updateHUD();
+                    nextQuestion();
+                } else {
+                    // WRONG MATCH!
+                    soundSynth.playWrong();
+                    particles.spawn(cx, cy, '#ef4444', 20);
+                    combo = 1;
+                    updateHUD();
+
+                    cardElem.classList.add('animate-shake');
+                    setTimeout(() => cardElem.classList.remove('animate-shake'), 400);
+
+                    showToast(`ยังไม่ใช่ถิ่นที่อยู่นี้! ลองดูใหม่อีกครั้ง: ${activeCardItem.hint}`, '❌');
+                    resetCardPosition(cardElem);
+                }
+            } else {
+                // Dropped outside zones
+                resetCardPosition(cardElem);
+            }
+        }
+
+        // Reset Card Back to Dock
+        function resetCardPosition(cardElem) {
+            cardElem.style.position = 'relative';
+            cardElem.style.left = 'auto';
+            cardElem.style.top = 'auto';
+            cardElem.style.zIndex = 'auto';
+        }
+
+        // Mouse / Touch Fallback Handler
+        function setupFallbackControls(cardElem) {
+            let isDragging = false;
+
+            const onPointerDown = (e) => {
+                isDragging = true;
+                soundSynth.playGrab();
+                cardElem.classList.add('scale-105', 'shadow-2xl', 'ring-4', 'ring-amber-400');
+            };
+
+            const onPointerMove = (e) => {
+                if (!isDragging) return;
+                const currentX = e.clientX || (e.touches && e.touches[0].clientX);
+                const currentY = e.clientY || (e.touches && e.touches[0].clientY);
+
+                cursorX = currentX;
+                cursorY = currentY;
+
+                cardElem.style.position = 'fixed';
+                cardElem.style.left = `${currentX - 90}px`;
+                cardElem.style.top = `${currentY - 70}px`;
+                cardElem.style.zIndex = '1000';
+            };
+
+            const onPointerUp = (e) => {
+                if (!isDragging) return;
+                isDragging = false;
+                const endX = e.clientX || (e.changedTouches && e.changedTouches[0].clientX);
+                const endY = e.clientY || (e.changedTouches && e.changedTouches[0].clientY);
+
+                cardElem.classList.remove('scale-105', 'shadow-2xl', 'ring-4', 'ring-amber-400');
+                checkCardDrop(endX, endY, cardElem);
+            };
+
+            cardElem.addEventListener('mousedown', onPointerDown);
+            window.addEventListener('mousemove', onPointerMove);
+            window.addEventListener('mouseup', onPointerUp);
+
+            cardElem.addEventListener('touchstart', onPointerDown, { passive: true });
+            window.addEventListener('touchmove', onPointerMove, { passive: true });
+            window.addEventListener('touchend', onPointerUp);
+        }
+
+        // Render Active Target Item Card (ENLARGED IMAGE)
+        function renderActiveCard() {
+            activeCardContainer.innerHTML = '';
+            if (!activeCardItem) return;
+
+            const card = document.createElement('div');
+            card.className = 'draggable-card glass-card px-6 py-4 rounded-3xl cursor-grab active:cursor-grabbing flex items-center gap-5 border-2 border-amber-400/60 shadow-2xl transition-transform hover:scale-105 bg-slate-900/90 select-none max-w-lg';
+            card.dataset.habitat = activeCardItem.habitat;
+
+            card.innerHTML = `
+                <img src="${activeCardItem.image}" alt="${activeCardItem.name}" referrerpolicy="no-referrer" class="w-20 h-20 md:w-28 md:h-28 object-cover rounded-2xl bg-slate-800/80 p-1.5 border-2 border-white/30 shadow-lg animate-bounce-short">
+                <div>
+                    <h3 class="text-lg md:text-2xl font-black text-white">${activeCardItem.name}</h3>
+                    <p class="text-xs md:text-sm text-emerald-300 font-semibold mt-1">💡 คำใบ้: ${activeCardItem.hint}</p>
+                </div>
+            `;
+
+            activeCardContainer.appendChild(card);
+            setupFallbackControls(card);
+        }
+
+        // Shuffle Questions Helper Function
+        function shuffleArray(arr) {
+            return [...arr].sort(() => Math.random() - 0.5);
+        }
+
+        // Load Game Level Data
+        function loadLevel(levelIdx) {
+            currentLevelIdx = levelIdx;
+            const levelData = GAME_LEVELS[currentLevelIdx];
+
+            // Update Zones with ENLARGED Icons
+            zoneLeft.dataset.habitat = levelData.zones.left.id;
+            document.getElementById('zone-left-icon').src = levelData.zones.left.image;
+            document.getElementById('zone-left-title').textContent = levelData.zones.left.name;
+            document.getElementById('zone-left-desc').textContent = levelData.zones.left.desc;
+            document.getElementById('zone-left-collected').innerHTML = '';
+
+            zoneRight.dataset.habitat = levelData.zones.right.id;
+            document.getElementById('zone-right-icon').src = levelData.zones.right.image;
+            document.getElementById('zone-right-title').textContent = levelData.zones.right.name;
+            document.getElementById('zone-right-desc').textContent = levelData.zones.right.desc;
+            document.getElementById('zone-right-collected').innerHTML = '';
+
+            // Shuffle Items for Level
+            levelItemsQueue = shuffleArray(levelData.items);
+            currentItemIdx = 0;
+            activeCardItem = levelItemsQueue[currentItemIdx];
+
+            updateHUD();
+            renderActiveCard();
+            showToast(`เริ่ม ${levelData.name} - แยกสิ่งมีชีวิตให้ถูกต้อง!`, '🎯');
+        }
+
+        // Advance to Next Question or Next Level Knowledge Modal
+        function nextQuestion() {
+            currentItemIdx++;
+            if (currentItemIdx < levelItemsQueue.length) {
+                activeCardItem = levelItemsQueue[currentItemIdx];
+                renderActiveCard();
+            } else {
+                // LEVEL CLEARED! Show Level Educational Knowledge Modal!
+                showLevelKnowledgeModal();
+            }
+        }
+
+        // Display Level Completion Science Knowledge Modal
+        function showLevelKnowledgeModal() {
+            const levelData = GAME_LEVELS[currentLevelIdx];
+            knowledgeLevelTitle.textContent = `🎉 ผ่าน ${levelData.name} สำเร็จ!`;
+
+            let html = `
+                <div class="bg-slate-900/80 p-4 rounded-2xl border border-emerald-500/30 mb-4">
+                    <h4 class="text-sm font-bold text-amber-300 mb-2">สรุปสิ่งมีชีวิตและถิ่นที่อยู่ที่พบในด่านนี้:</h4>
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
+            `;
+
+            levelData.items.forEach(item => {
+                html += `
+                    <div class="bg-white/5 p-2 rounded-xl border border-white/10 flex flex-col items-center text-center">
+                        <img src="${item.image}" alt="${item.name}" referrerpolicy="no-referrer" class="w-14 h-14 object-cover rounded-lg border border-white/20 mb-1">
+                        <p class="text-xs font-bold text-white">${item.name}</p>
+                        <p class="text-[10px] text-emerald-300">${item.habitat === levelData.zones.left.id ? levelData.zones.left.name : levelData.zones.right.name}</p>
+                    </div>
+                `;
+            });
+
+            html += `
+                    </div>
+                </div>
+                <div class="space-y-3">
+            `;
+
+            levelData.summaryKnowledge.forEach(k => {
+                html += `
+                    <div class="bg-white/5 p-3 rounded-2xl border border-white/10">
+                        <h4 class="text-sm font-bold text-emerald-300 mb-1">${k.title}</h4>
+                        <p class="text-xs text-slate-200 leading-relaxed">${k.text}</p>
+                    </div>
+                `;
+            });
+
+            html += `</div>`;
+
+            knowledgeContentBody.innerHTML = html;
+
+            if (currentLevelIdx + 1 < GAME_LEVELS.length) {
+                btnNextLevel.textContent = '➡️ ลุยด่านต่อไป!';
+            } else {
+                btnNextLevel.textContent = '🏆 ดูสรุปผลรวมและรับเหรียญตรา!';
+            }
+
+            modalLevelKnowledge.classList.remove('hidden');
+        }
+
+        // HUD Display Refresh
+        function updateHUD() {
+            hudLevel.textContent = `${currentLevelIdx + 1}/${GAME_LEVELS.length}`;
+            hudScore.textContent = score;
+            hudCombo.textContent = `x${combo}`;
+
+            const mins = Math.floor(totalTimeSeconds / 60).toString().padStart(2, '0');
+            const secs = (totalTimeSeconds % 60).toString().padStart(2, '0');
+            hudTimer.textContent = `${mins}:${secs}`;
+        }
+
+        // Toast Feedback Notification Banner
+        let toastTimeout = null;
+        function showToast(msg, icon = '💡') {
+            toastMessage.textContent = msg;
+            toastIcon.textContent = icon;
+
+            toastBanner.classList.remove('translate-y-[-20px]', 'opacity-0');
+            toastBanner.classList.add('translate-y-0', 'opacity-100');
+
+            if (toastTimeout) clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => {
+                toastBanner.classList.remove('translate-y-0', 'opacity-100');
+                toastBanner.classList.add('translate-y-[-20px]', 'opacity-0');
+            }, 3500);
+        }
+
+        // Trigger Final Victory Modal
+        function triggerVictory() {
+            clearInterval(gameTimerInterval);
+            soundSynth.playVictory();
+
+            document.getElementById('summary-score').textContent = score;
+            const mins = Math.floor(totalTimeSeconds / 60).toString().padStart(2, '0');
+            const secs = (totalTimeSeconds % 60).toString().padStart(2, '0');
+            document.getElementById('summary-time').textContent = `${mins}:${secs}`;
+            document.getElementById('summary-combo').textContent = `x${maxCombo}`;
+
+            // Calculate Star Ratings
+            const starsContainer = document.getElementById('victory-stars');
+            let starsHtml = '';
+            if (score >= 1500) {
+                starsHtml = '⭐ ⭐ ⭐';
+                document.getElementById('summary-badge').textContent = '🏆 ยอดนักชีววิทยาระดับทอง';
+            } else if (score >= 900) {
+                starsHtml = '⭐ ⭐ ⚪';
+                document.getElementById('summary-badge').textContent = '🥈 นักสำรวจธรรมชาติเหรียญเงิน';
+            } else {
+                starsHtml = '⭐ ⚪ ⚪';
+                document.getElementById('summary-badge').textContent = '🥉 ผู้เริ่มต้นเรียนรู้ธรรมชาติ';
+            }
+            starsContainer.innerHTML = starsHtml;
+
+            modalVictory.classList.remove('hidden');
+        }
+
+        // Start Game Clock Timer
+        function startGameTimer() {
+            totalTimeSeconds = 0;
+            if (gameTimerInterval) clearInterval(gameTimerInterval);
+            gameTimerInterval = setInterval(() => {
+                totalTimeSeconds++;
+                updateHUD();
+            }, 1000);
+        }
+
+        // Initialize MediaPipe Hands & Camera Stream
+        async function initARCamera() {
+            soundSynth.init();
+
+            const hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.65,
+                minTrackingConfidence: 0.65
+            });
+
+            hands.onResults(onResults);
+
+            const camera = new Camera(webcamElement, {
+                onFrame: async () => {
+                    await hands.send({ image: webcamElement });
+                },
+                width: 1280,
+                height: 720
+            });
+
+            try {
+                await camera.start();
+                handStatusBadge.className = "px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1.5";
+                handStatusText.textContent = "เปิดกล้องแล้ว";
+            } catch (err) {
+                console.warn("Camera start failed, activating touch fallback mode:", err);
+                handStatusBadge.className = "px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1.5";
+                handStatusText.textContent = "ใช้ Mouse / Touch Controls";
+            }
+        }
+
+        // Event Listeners for Game Buttons
+        btnStartGame.addEventListener('click', () => {
+            modalStart.classList.add('hidden');
+            score = 0;
+            combo = 1;
+            maxCombo = 1;
+            loadLevel(0);
+            startGameTimer();
+            initARCamera();
+        });
+
+        btnNextLevel.addEventListener('click', () => {
+            modalLevelKnowledge.classList.add('hidden');
+            if (currentLevelIdx + 1 < GAME_LEVELS.length) {
+                loadLevel(currentLevelIdx + 1);
+            } else {
+                triggerVictory();
+            }
+        });
+
+        btnRestartGame.addEventListener('click', () => {
+            modalVictory.classList.add('hidden');
+            score = 0;
+            combo = 1;
+            maxCombo = 1;
+            loadLevel(0);
+            startGameTimer();
+        });
+
+        btnToggleSound.addEventListener('click', () => {
+            soundSynth.enabled = !soundSynth.enabled;
+            btnToggleSound.textContent = soundSynth.enabled ? '🔊' : '🔇';
+            showToast(soundSynth.enabled ? 'เปิดเสียงแล้ว' : 'ปิดเสียงแล้ว', soundSynth.enabled ? '🔊' : '🔇');
+        });
+
+        // Window Load Initialization
+        window.onload = () => {
+            console.log("WebAR Science Explorer initialized!");
+        };
+    </script>
+</body>
+</html>
